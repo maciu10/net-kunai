@@ -8,7 +8,7 @@
 
 **Net-Kunai** is a specialized, lightweight container image designed to be a "Swiss Army Knife" for network engineers, SREs, and developers debugging complex networking issues in Kubernetes, OpenShift, and Linux environments.
 
-It combines low-level kernel diagnostic tools (like `dropwatch` and `retis`) with standard performance testers (`iperf3`, `netperf`) and utility clients (`oc`, `kubectl`, `sshuttle`).
+It combines low-level kernel diagnostic tools (like `dropwatch` and `retis`) with OSINT/Lookup utilities (`asn`) and standard performance testers (`iperf3`, `netperf`).
 
 ---
 
@@ -20,6 +20,7 @@ This image mixes tools compiled from the latest source (for bleeding-edge featur
 | :--- | :--- | :--- | :--- |
 | **Dropwatch** | 🏗 Compiled | Latest Git `HEAD` | `dropwatch -v` |
 | **Retis** | 🐳 Official | Extracted from `quay.io/retis/retis` | `retis --version` |
+| **ASN** | 📥 Download | Latest Script | `asn --version` |
 | **Iperf3** | 🏗 Compiled | Latest Git `HEAD` (Static Build) | `iperf3 -v` |
 | **Netperf** | 🏗 Compiled | Latest Git `HEAD` | `netperf -V` |
 | **Uperf** | 🏗 Compiled | Latest Git `HEAD` | `uperf -V` |
@@ -35,24 +36,45 @@ This image mixes tools compiled from the latest source (for bleeding-edge featur
 
 ---
 
-## 🚀 Quick Start
+## ⚡ Quick Start (Pre-built One-Liner)
 
-> [!WARNING]
-> **Privileged Access Required**
-> Net-Kunai requires privileged access to the host kernel (for Dropwatch, Retis, and WireGuard) and access to the host network namespace. Do not deploy this on untrusted multi-tenant nodes.
+If you don't want to build anything or use YAML files, you can run the pre-built image directly from Quay using this one-liner.
+
+> [!NOTE]
+> This command uses JSON overrides to grant the necessary `privileged` security context and `hostNetwork` access required for network debugging.
+
+**OpenShift (OCP):**
+```bash
+oc run net-kunai --rm -it --image=quay.io/rh_ee_mlecki/net-kunai:latest --restart=Never --overrides='{"spec": {"hostNetwork": true, "hostPID": true, "securityContext": {"privileged": true}}}' -- /bin/bash
+
+```
+
+**Vanilla Kubernetes:**
+
+```bash
+kubectl run net-kunai --rm -it --image=quay.io/rh_ee_mlecki/net-kunai:latest --restart=Never --overrides='{"spec": {"hostNetwork": true, "hostPID": true, "securityContext": {"privileged": true}}}' -- /bin/bash
+
+```
+
+---
+
+## 🚀 Full Deployment (Robust Method)
+
+For deep debugging (specifically for **Dropwatch** and **Retis**), you must mount the host's `/proc` and `/sys` directories. The one-liner above cannot easily do this, so use this manifest method for full capabilities.
 
 ### Step 1: Create Identity & Permissions
 
 First, create a `ServiceAccount` and grant it the necessary privileges.
 
-**For OpenShift (OCP)**
+**OpenShift (OCP):**
+
 ```bash
 oc create sa net-kunai
 oc adm policy add-scc-to-user privileged -z net-kunai
 
 ```
 
-**For Vanilla Kubernetes**
+**Vanilla Kubernetes:**
 *(Ensure your namespace allows privileged pods)*
 
 ```bash
@@ -64,7 +86,7 @@ kubectl create sa net-kunai
 
 Copy the following YAML to a file named `net-kunai.yaml` and apply it.
 
-**Note on `/host/proc`:** We explicitly mount the host's proc filesystem to `/host/proc` to allow tools like `dropwatch` to resolve kernel symbols (which are often masked in standard container environments).
+**Note on `/host/proc`:** We explicitly mount the host's proc filesystem to `/host/proc` to allow tools like `dropwatch` to resolve kernel symbols.
 
 ```yaml
 apiVersion: v1
@@ -125,7 +147,7 @@ spec:
 **Apply it:**
 
 ```bash
-kubectl apply -f net-kunai.yaml
+oc apply -f net-kunai.yaml
 
 ```
 
@@ -134,7 +156,9 @@ kubectl apply -f net-kunai.yaml
 Attach to the shell to start troubleshooting.
 
 ```bash
-kubectl exec -it net-kunai -- /bin/bash
+oc rsh net-kunai
+# OR if rsh is not interactive enough:
+oc exec -it net-kunai -- /bin/bash
 
 ```
 
@@ -146,8 +170,8 @@ kubectl exec -it net-kunai -- /bin/bash
 When you are finished, delete the pod and the service account.
 
 ```bash
-kubectl delete pod net-kunai
-kubectl delete sa net-kunai
+oc delete pod net-kunai
+oc delete sa net-kunai
 
 ```
 
@@ -164,7 +188,7 @@ graph TD
     A -->|Silent Drops| D(Check Kernel Drops)
     A -->|Slow Throughput| E(Check Bandwidth)
     A -->|Slow Latency| F(Check Transaction Speed)
-    A -->|Unknown Traffic Hog| G(Check Top Talkers)
+    A -->|External Connectivity| G(Check ASN/Route)
     A -->|Routing/CNI Issues| H(Trace Packet Path)
     
     B --> I[Tool: <b>nc / hping3</b>]
@@ -172,7 +196,7 @@ graph TD
     D --> K[Tool: <b>dropwatch</b>]
     E --> L[Tool: <b>iperf3</b>]
     F --> M[Tool: <b>netperf</b>]
-    G --> N[Tool: <b>iftop</b>]
+    G --> N[Tool: <b>asn</b>]
     H --> O[Tool: <b>retis</b>]
 
 ```
@@ -186,17 +210,19 @@ graph TD
 | **Slow Request/Response** | Latency / Jitter | `netperf` |
 | **Unknown Traffic Hog** | Noise / DDoS | `iftop` |
 | **CNI / Routing Weirdness** | Routing Table / BPF | `retis` |
-| **DNS Failures** | CoreDNS / Upstream | `dig` |
+| **External Route/ISP** | BGP / Reputation | `asn` |
 | **Restricted Network** | Private Subnet | `sshuttle` |
 
 ---
 
-## 🛠 Building the Image
+## 🛠 Building the Image (Optional)
+
+If you prefer to build the image yourself instead of using the pre-built one.
 
 ### Standard Build (Linux/Intel)
 
 ```bash
-docker build -t quay.io/rh_ee_mlecki/net-kunai:latest .
+podman build -t quay.io/rh_ee_mlecki/net-kunai:latest .
 
 ```
 
@@ -214,7 +240,38 @@ podman build --platform linux/amd64 -t quay.io/rh_ee_mlecki/net-kunai:latest .
 
 ## 🧰 Detailed Tool Usage
 
-### 1. Kernel & Packet Forensics
+### 1. Intelligence & Reconnaissance
+
+<details>
+<summary><b>ASN</b> (Click to expand)</summary>
+
+**Best For:** Investigating external IP addresses, checking AS (Autonomous System) paths, and ISP reputation.
+
+```bash
+# Lookup an IP (Returns ASN, Organization, Reputation)
+asn 8.8.8.8
+
+# Lookup an Organization
+asn Google
+
+```
+
+</details>
+
+<details>
+<summary><b>Tcpdump</b> (Click to expand)</summary>
+
+**Best For:** Verifying packet arrival on an interface.
+
+```bash
+# Capture port 80 traffic, no DNS resolution (-n), verbose (-v)
+tcpdump -i any port 80 -nn -v
+
+```
+
+</details>
+
+### 2. Kernel Forensics
 
 <details>
 <summary><b>Dropwatch</b> (Click to expand)</summary>
@@ -232,9 +289,6 @@ dropwatch -l kas
 
 # 3. Start monitoring
 > start
-
-# Output Example:
-# 1 drops at tcp_v4_rcv+80 (0xffffffff81789a00)
 
 ```
 
@@ -256,20 +310,7 @@ retis collect -f "ip.daddr == 10.128.2.50"
 
 </details>
 
-<details>
-<summary><b>Tcpdump</b> (Click to expand)</summary>
-
-**Best For:** Verifying packet arrival on an interface.
-
-```bash
-# Capture port 80 traffic, no DNS resolution (-n), verbose (-v)
-tcpdump -i any port 80 -nn -v
-
-```
-
-</details>
-
-### 2. Performance & Stress Testing
+### 3. Performance & Stress Testing
 
 <details>
 <summary><b>Iperf3</b> (Click to expand)</summary>
@@ -300,20 +341,7 @@ netperf -H <target_ip> -t TCP_RR
 
 </details>
 
-<details>
-<summary><b>Hping3</b> (Click to expand)</summary>
-
-**Best For:** Testing firewall rules by manually crafting packets (e.g., SYN injection).
-
-```bash
-# Send SYN packets to port 80 (Simulate TCP Connect)
-hping3 -S -p 80 <target_ip>
-
-```
-
-</details>
-
-### 3. Utilities & Connectivity
+### 4. Utilities & Connectivity
 
 * **`sshuttle`**: VPN into a private subnet via a jump host.
 ```bash
