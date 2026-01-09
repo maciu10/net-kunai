@@ -62,7 +62,9 @@ kubectl create sa net-kunai
 
 ### Step 2: Deploy the Pod
 
-Copy the following YAML to a file named `net-kunai.yaml` and apply it. This configures the necessary host mounts (`/sys`, `/boot`, `/lib/modules`) for eBPF tools.
+Copy the following YAML to a file named `net-kunai.yaml` and apply it.
+
+**Note on `/host/proc`:** We explicitly mount the host's proc filesystem to `/host/proc` to allow tools like `dropwatch` to resolve kernel symbols (which are often masked in standard container environments).
 
 ```yaml
 apiVersion: v1
@@ -79,14 +81,18 @@ spec:
     kubernetes.io/os: linux
   containers:
   - name: net-kunai
-    image: quay.io/YOUR_USER/net-kunai:latest
+    image: quay.io/rh_ee_mlecki/net-kunai:latest
     imagePullPolicy: Always
     command: ["/bin/bash", "-c", "sleep infinity"]
     securityContext:
       privileged: true
       capabilities:
-        add: ["NET_ADMIN", "SYS_ADMIN", "SYS_PTRACE"]
+        add: ["NET_ADMIN", "SYS_ADMIN", "SYS_PTRACE", "SYSLOG"]
     volumeMounts:
+    # Mount host proc to resolve kernel symbols (kallsyms)
+    - name: host-proc
+      mountPath: /host/proc
+      readOnly: true
     - name: modules
       mountPath: /lib/modules
       readOnly: true
@@ -97,6 +103,10 @@ spec:
       mountPath: /boot
       readOnly: true
   volumes:
+  - name: host-proc
+    hostPath:
+      path: /proc
+      type: Directory
   - name: modules
     hostPath:
       path: /lib/modules
@@ -186,7 +196,7 @@ graph TD
 ### Standard Build (Linux/Intel)
 
 ```bash
-docker build -t quay.io/YOUR_USER/net-kunai:latest .
+docker build -t quay.io/rh_ee_mlecki/net-kunai:latest .
 
 ```
 
@@ -196,7 +206,7 @@ docker build -t quay.io/YOUR_USER/net-kunai:latest .
 > If you are on a Mac building for an Intel/AMD cluster, you **must** use the platform flag.
 
 ```bash
-podman build --platform linux/amd64 -t quay.io/YOUR_USER/net-kunai:latest .
+podman build --platform linux/amd64 -t quay.io/rh_ee_mlecki/net-kunai:latest .
 
 ```
 
@@ -211,11 +221,16 @@ podman build --platform linux/amd64 -t quay.io/YOUR_USER/net-kunai:latest .
 
 **Best For:** Finding "silent" packet drops that tcpdump can't explain.
 
+**Important:** You must link the host's `kallsyms` for names to resolve correctly.
+
 ```bash
-# 1. Initialize with Kernel Address Space lookup
+# 1. Link host symbols (Required because container runtimes mask /proc)
+ln -sf /host/proc/kallsyms /proc/kallsyms
+
+# 2. Initialize with Kernel Address Space lookup
 dropwatch -l kas
 
-# 2. Start monitoring
+# 3. Start monitoring
 > start
 
 # Output Example:
@@ -326,8 +341,3 @@ socat TCP-LISTEN:8080,fork TCP:google.com:80
 mtr 8.8.8.8
 
 ```
-
-
-
-```
-

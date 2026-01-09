@@ -1,0 +1,52 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: net-kunai
+  labels:
+    app: net-kunai
+spec:
+  serviceAccountName: net-kunai
+  hostNetwork: true
+  hostPID: true
+  nodeSelector:
+    kubernetes.io/os: linux
+  containers:
+  - name: net-kunai
+    image: quay.io/rh_ee_mlecki/net-kunai:latest
+    imagePullPolicy: Always
+    command: ["/bin/bash", "-c", "sleep infinity"]
+    securityContext:
+      privileged: true
+      capabilities:
+        add: ["NET_ADMIN", "SYS_ADMIN", "SYS_PTRACE", "SYSLOG"]
+    volumeMounts:
+    # Mount host proc to resolve kernel symbols (kallsyms)
+    - name: host-proc
+      mountPath: /host/proc
+      readOnly: true
+    - name: modules
+      mountPath: /lib/modules
+      readOnly: true
+    - name: sys
+      mountPath: /sys
+      readOnly: true
+    - name: boot
+      mountPath: /boot
+      readOnly: true
+  volumes:
+  - name: host-proc
+    hostPath:
+      path: /proc
+      type: Directory
+  - name: modules
+    hostPath:
+      path: /lib/modules
+      type: Directory
+  - name: sys
+    hostPath:
+      path: /sys
+      type: Directory
+  - name: boot
+    hostPath:
+      path: /boot
+      type: Directory
